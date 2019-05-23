@@ -18,7 +18,7 @@
 #include <math.h>
 #include <pthread.h>
 
-#define MAX_STRING 500
+#define MAX_STRING 100
 #define EXP_TABLE_SIZE 1000
 #define MAX_EXP 6
 #define MAX_SENTENCE_LENGTH 1000
@@ -33,7 +33,7 @@ struct vocab_word {
   int *point;
   char *word, *code, codelen;
 };
-int seed = -1;
+
 char train_file[MAX_STRING], output_file[MAX_STRING];
 char save_vocab_file[MAX_STRING], read_vocab_file[MAX_STRING];
 struct vocab_word *vocab;
@@ -44,17 +44,15 @@ long long train_words = 0, word_count_actual = 0, iter = 5, file_size = 0, class
 real alpha = 0.025, starting_alpha, sample = 1e-3;
 real *syn0, *syn1, *syn1neg, *expTable;
 clock_t start;
-double power = 0.75;
+
 int hs = 0, negative = 5;
 const int table_size = 1e8;
 int *table;
 
 void InitUnigramTable() {
-
-  printf("POWER IS %f\n", power);
   int a, i;
   double train_words_pow = 0;
-  double d1;
+  double d1, power = 0.75;
   table = (int *)malloc(table_size * sizeof(int));
   for (a = 0; a < vocab_size; a++) train_words_pow += pow(vocab[a].cn, power);
   i = 0;
@@ -341,6 +339,7 @@ void ReadVocab() {
   }
   fin = fopen(train_file, "rb");
   if (fin == NULL) {
+	printf("training file %s", train_file);
     printf("ERROR: training data file not found!\n");
     exit(1);
   }
@@ -349,9 +348,9 @@ void ReadVocab() {
   fclose(fin);
 }
 
-void InitNet(unsigned long long next_random) {
+void InitNet() {
   long long a, b;
-  //unsigned long long next_random = 1;
+  unsigned long long next_random = 1;
   a = posix_memalign((void **)&syn0, 128, (long long)vocab_size * layer1_size * sizeof(real));
   if (syn0 == NULL) {printf("Memory allocation failed\n"); exit(1);}
   if (hs) {
@@ -363,10 +362,8 @@ void InitNet(unsigned long long next_random) {
   if (negative>0) {
     a = posix_memalign((void **)&syn1neg, 128, (long long)vocab_size * layer1_size * sizeof(real));
     if (syn1neg == NULL) {printf("Memory allocation failed\n"); exit(1);}
-    for (a = 0; a < vocab_size; a++) for (b = 0; b < layer1_size; b++) {
-      next_random = next_random * (unsigned long long)25214903917 + 11;
-      syn1neg[a * layer1_size + b] = (((next_random & 0xFFFF) / (real)65536) - 0.5) / layer1_size;
-    }
+    for (a = 0; a < vocab_size; a++) for (b = 0; b < layer1_size; b++)
+     syn1neg[a * layer1_size + b] = 0;
   }
   for (a = 0; a < vocab_size; a++) for (b = 0; b < layer1_size; b++) {
     next_random = next_random * (unsigned long long)25214903917 + 11;
@@ -375,22 +372,11 @@ void InitNet(unsigned long long next_random) {
   CreateBinaryTree();
 }
 
-struct thread_args {
-  long id;
-  unsigned long long next_random;
-};
-
-void *TrainModelThread(void *void_args) {
-
-  // Unpack arguments
-  struct thread_args *my_args = (struct thread_args *)void_args;
-  long id = my_args->id;
-  unsigned long long next_random = my_args->next_random;
-  printf("id: %ld; nr: %llu\n", id, next_random);
-
+void *TrainModelThread(void *id) {
   long long a, b, d, cw, word, last_word, sentence_length = 0, sentence_position = 0;
   long long word_count = 0, last_word_count = 0, sen[MAX_SENTENCE_LENGTH + 1];
   long long l1, l2, c, target, label, local_iter = iter;
+  unsigned long long next_random = (long long)id;
   char eof = 0;
   real f, g;
   clock_t now;
@@ -569,74 +555,30 @@ void *TrainModelThread(void *void_args) {
   pthread_exit(NULL);
 }
 
-
-void TrainModel(unsigned long long next_random) {
+void TrainModel() {
   long a, b, c, d;
-  FILE *f_final, *f_init;
+  FILE *fo;
   pthread_t *pt = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
   printf("Starting training using file %s\n", train_file);
   starting_alpha = alpha;
   if (read_vocab_file[0] != 0) ReadVocab(); else LearnVocabFromTrainFile();
   if (save_vocab_file[0] != 0) SaveVocab();
   if (output_file[0] == 0) return;
-  InitNet(next_random);
+  InitNet();
   if (negative > 0) InitUnigramTable();
   start = clock();
-
-  char init_fname[MAX_STRING], final_fname[MAX_STRING];
-
-  sprintf(init_fname, "%s-init.txt", output_file);
-  sprintf(final_fname, "%s-final.txt", output_file);
-
-  // Save initial vectors, helpful for comparison and reproduction.
-  f_init = fopen(init_fname, "wb");
-  fprintf(f_init, "%lld %lld\n", vocab_size, layer1_size);
-  for (a = 0; a < vocab_size; a++) {
-    fprintf(f_init, "%s ", vocab[a].word);
-    if (binary) for (b = 0; b < layer1_size; b++) fwrite(&syn0[a * layer1_size + b], sizeof(real), 1, f_init);
-    else for (b = 0; b < layer1_size; b++) fprintf(f_init, "%.12f ", syn0[a * layer1_size + b]);
-    fprintf(f_init, "\n");
-  }
-  // Save initial covectors
-  fprintf(f_init, "covectors\n");
-  for (a = 0; a < vocab_size; a++) {
-    fprintf(f_init, "%s ", vocab[a].word);
-    if (binary) for (b = 0; b < layer1_size; b++) fwrite(&syn1neg[a * layer1_size + b], sizeof(real), 1, f_init);
-    else for (b = 0; b < layer1_size; b++) fprintf(f_init, "%.12f ", syn1neg[a * layer1_size + b]);
-    fprintf(f_init, "\n");
-  }
-  fclose(f_init);
-
-  struct thread_args *args_list = (struct thread_args *)malloc(num_threads * sizeof(struct thread_args));
-  for (a = 0; a < num_threads; a++) {
-      next_random = next_random * (unsigned long long)25214903917 + 11;
-      args_list[a].id = a;
-      args_list[a].next_random = next_random;
-      args_list[a].next_random = next_random;
-      pthread_create(&pt[a], NULL, TrainModelThread, (void *)&args_list[a]);
-  }
-
+  for (a = 0; a < num_threads; a++) pthread_create(&pt[a], NULL, TrainModelThread, (void *)a);
   for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
-  f_final = fopen(final_fname, "wb");
+  fo = fopen(output_file, "wb");
   if (classes == 0) {
-
-    // Save the final vectors
-    fprintf(f_final, "%lld %lld\n", vocab_size, layer1_size);
+    // Save the word vectors
+    fprintf(fo, "%lld %lld\n", vocab_size, layer1_size);
     for (a = 0; a < vocab_size; a++) {
-      fprintf(f_final, "%s ", vocab[a].word);
-      if (binary) for (b = 0; b < layer1_size; b++) fwrite(&syn0[a * layer1_size + b], sizeof(real), 1, f_final);
-      else for (b = 0; b < layer1_size; b++) fprintf(f_final, "%.12f ", syn0[a * layer1_size + b]);
-      fprintf(f_final, "\n");
+      fprintf(fo, "%s ", vocab[a].word);
+      if (binary) for (b = 0; b < layer1_size; b++) fwrite(&syn0[a * layer1_size + b], sizeof(real), 1, fo);
+      else for (b = 0; b < layer1_size; b++) fprintf(fo, "%lf ", syn0[a * layer1_size + b]);
+      fprintf(fo, "\n");
     }
-    // Save the final covectors
-    fprintf(f_final, "covectors\n");
-    for (a = 0; a < vocab_size; a++) {
-      fprintf(f_final, "%s ", vocab[a].word);
-      if (binary) for (b = 0; b < layer1_size; b++) fwrite(&syn1neg[a * layer1_size + b], sizeof(real), 1, f_final);
-      else for (b = 0; b < layer1_size; b++) fprintf(f_final, "%.12f ", syn1neg[a * layer1_size + b]);
-      fprintf(f_final, "\n");
-    }
-
   } else {
     // Run K-means on the word vectors
     int clcn = classes, iter = 10, closeid;
@@ -676,12 +618,12 @@ void TrainModel(unsigned long long next_random) {
       }
     }
     // Save the K-means classes
-    for (a = 0; a < vocab_size; a++) fprintf(f_final, "%s %d\n", vocab[a].word, cl[a]);
+    for (a = 0; a < vocab_size; a++) fprintf(fo, "%s %d\n", vocab[a].word, cl[a]);
     free(centcn);
     free(cent);
     free(cl);
   }
-  fclose(f_final);
+  fclose(fo);
 }
 
 int ArgPos(char *str, int argc, char **argv) {
@@ -762,21 +704,6 @@ int main(int argc, char **argv) {
   if ((i = ArgPos((char *)"-iter", argc, argv)) > 0) iter = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-min-count", argc, argv)) > 0) min_count = atoi(argv[i + 1]);
   if ((i = ArgPos((char *)"-classes", argc, argv)) > 0) classes = atoi(argv[i + 1]);
-  if ((i = ArgPos((char *)"-seed", argc, argv)) > 0) seed = atoi(argv[i + 1]);
-  if ((i = ArgPos((char *)"-power", argc, argv)) > 0) power = atof(argv[i + 1]);
-
-  printf("POWER IS %f\n", power);
-  if(seed == -1) {
-      fprintf(stderr, "Seeding with current time\n");
-      srand(time(0));
-  } else if (seed == 0) {
-      fprintf(stderr, "Don't use 0 as a seed, try 1.\n");
-      return 0;
-  } else {
-      fprintf(stderr, "Seeding: %d\n", seed);
-      srand(seed);
-  }
-
   vocab = (struct vocab_word *)calloc(vocab_max_size, sizeof(struct vocab_word));
   vocab_hash = (int *)calloc(vocab_hash_size, sizeof(int));
   expTable = (real *)malloc((EXP_TABLE_SIZE + 1) * sizeof(real));
@@ -784,6 +711,6 @@ int main(int argc, char **argv) {
     expTable[i] = exp((i / (real)EXP_TABLE_SIZE * 2 - 1) * MAX_EXP); // Precompute the exp() table
     expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
   }
-  TrainModel(seed);
+  TrainModel();
   return 0;
 }

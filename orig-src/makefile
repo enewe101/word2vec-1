@@ -6,6 +6,16 @@ all: word2vec word2phrase distance word-analogy compute-accuracy
 
 word2vec : word2vec.c
 	$(CC) word2vec.c -o word2vec $(CFLAGS)
+word2vec-basic : word2vec-pristine.c
+	$(CC) word2vec-pristine.c -o word2vec-pristine $(CFLAGS)
+word2vec-basic : word2vec-inspect.c
+	$(CC) word2vec-inspect.c -o word2vec-inspect $(CFLAGS)
+word2vec-basic : word2vec-en.c
+	$(CC) word2vec-en.c -o word2vec-en $(CFLAGS)
+word2vec-basic : word2vec-en.c
+	$(CC) word2vec-en.c -o word2vec-en $(CFLAGS)
+word2vec-basic : word2vec-basic.c
+	$(CC) word2vec-basic.c -o word2vec-basic $(CFLAGS)
 word2phrase : word2phrase.c
 	$(CC) word2phrase.c -o word2phrase $(CFLAGS)
 distance : distance.c
